@@ -31,7 +31,7 @@ const blockers = [
 let lastTime = performance.now();
 
 window.addEventListener("keydown", (event) => {
-  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(event.key)) {
+  if (["w", "a", "s", "d", " "].includes(event.key.toLowerCase())) {
     event.preventDefault();
   }
 
@@ -58,8 +58,8 @@ function update(delta) {
   player.attackCooldown = Math.max(0, player.attackCooldown - delta);
   player.attackTime = Math.max(0, player.attackTime - delta);
 
-  const horizontal = axis("arrowleft", "a", "arrowright", "d");
-  const vertical = axis("arrowup", "w", "arrowdown", "s");
+  const horizontal = axis("a", "d");
+  const vertical = axis("w", "s");
   const length = Math.hypot(horizontal, vertical) || 1;
   const attackMoveFactor = player.attackTime > 0 ? 0.42 : 1;
   const dx = (horizontal / length) * player.speed * attackMoveFactor * delta;
@@ -88,8 +88,8 @@ function startAttack() {
   player.attackCooldown = 0.48;
 }
 
-function axis(negativeKey, negativeAlt, positiveKey, positiveAlt) {
-  return Number(keys.has(positiveKey) || keys.has(positiveAlt)) - Number(keys.has(negativeKey) || keys.has(negativeAlt));
+function axis(negativeKey, positiveKey) {
+  return Number(keys.has(positiveKey)) - Number(keys.has(negativeKey));
 }
 
 function movePlayer(dx, dy) {
