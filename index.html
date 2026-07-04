@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dungeon Room Prototype</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="game-shell">
+      <canvas id="game" width="960" height="640" aria-label="Dungeon room game"></canvas>
+      <div class="hud" aria-hidden="true">
+        <div class="orb health"></div>
+        <div class="hud-center">
+          <span class="title">Forgotten Cellar</span>
+          <span class="hint">Move: WASD / Arrows | Attack: Space</span>
+        </div>
+        <div class="orb mana"></div>
+      </div>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>
