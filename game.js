@@ -59,6 +59,21 @@ const blockers = [
   { x: 628, y: 416, w: 92, h: 74, label: "barrels" },
 ];
 
+const enemies = [
+  {
+    type: "snake",
+    x: 480,
+    y: 252,
+    radius: 13,
+    speed: 92,
+    facing: 0,
+    slither: 0,
+    hitTime: 0,
+    hp: 4,
+    alive: true,
+  },
+];
+
 let lastTime = performance.now();
 
 window.addEventListener("keydown", (event) => {
@@ -96,7 +111,23 @@ function update(delta) {
     updatePlayer(player, delta);
   }
 
+  for (const enemy of enemies) {
+    updateEnemy(enemy, delta);
+  }
+
   resolvePlayerCollision(players[0], players[1]);
+
+  for (const enemy of enemies) {
+    if (!enemy.alive) {
+      continue;
+    }
+
+    for (const player of players) {
+      resolveCircleCollision(player, enemy);
+      constrainPlayerToRoom(player);
+      constrainEnemyToRoom(enemy);
+    }
+  }
 }
 
 function updatePlayer(player, delta) {
@@ -131,6 +162,7 @@ function startAttack(player) {
 
   player.attackTime = player.attackDuration;
   player.attackCooldown = 0.48;
+  strikeEnemies(player);
 }
 
 function axis(negativeKey, positiveKey) {
@@ -141,17 +173,91 @@ function movePlayer(player, dx, dy) {
   player.x += dx;
   player.y += dy;
 
-  const r = player.radius;
-  const room = world.room;
-  player.x = clamp(player.x, room.x + r, room.x + room.w - r);
-  player.y = clamp(player.y, room.y + r, room.y + room.h - r);
+  constrainPlayerToRoom(player);
 
   for (const box of blockers) {
     resolveCircleRect(player, box);
   }
 }
 
+function updateEnemy(enemy, delta) {
+  enemy.hitTime = Math.max(0, enemy.hitTime - delta);
+
+  if (!enemy.alive) {
+    return;
+  }
+
+  enemy.slither += delta * 9;
+
+  const target = getNearestPlayer(enemy);
+  const dx = target.x - enemy.x;
+  const dy = target.y - enemy.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  const wave = Math.sin(enemy.slither) * 0.45;
+  const forwardX = dx / distance;
+  const forwardY = dy / distance;
+  const sideX = -forwardY;
+  const sideY = forwardX;
+  const moveX = (forwardX + sideX * wave) * enemy.speed * delta;
+  const moveY = (forwardY + sideY * wave) * enemy.speed * delta;
+
+  enemy.facing = Math.atan2(forwardY, forwardX);
+  moveEnemy(enemy, moveX, 0);
+  moveEnemy(enemy, 0, moveY);
+}
+
+function moveEnemy(enemy, dx, dy) {
+  enemy.x += dx;
+  enemy.y += dy;
+  constrainEnemyToRoom(enemy);
+
+  for (const box of blockers) {
+    resolveCircleRect(enemy, box);
+  }
+}
+
+function getNearestPlayer(enemy) {
+  return players.reduce((nearest, player) => {
+    const nearestDistance = distanceBetween(enemy, nearest);
+    const playerDistance = distanceBetween(enemy, player);
+    return playerDistance < nearestDistance ? player : nearest;
+  }, players[0]);
+}
+
+function strikeEnemies(player) {
+  for (const enemy of enemies) {
+    if (!enemy.alive || !isEnemyInAttackArc(player, enemy)) {
+      continue;
+    }
+
+    enemy.hp -= 1;
+    enemy.hitTime = 0.22;
+    if (enemy.hp <= 0) {
+      enemy.alive = false;
+    }
+  }
+}
+
+function isEnemyInAttackArc(player, enemy) {
+  const dx = enemy.x - player.x;
+  const dy = enemy.y - player.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance > 72) {
+    return false;
+  }
+
+  const forwardHit = Math.sign(dx || player.facing) === player.facing;
+  return forwardHit || distance < 32;
+}
+
 function resolvePlayerCollision(first, second) {
+  resolveCircleCollision(first, second);
+  constrainPlayerToRoom(first);
+  constrainPlayerToRoom(second);
+}
+
+function resolveCircleCollision(first, second) {
   const dx = second.x - first.x;
   const dy = second.y - first.y;
   const distance = Math.hypot(dx, dy);
@@ -168,8 +274,6 @@ function resolvePlayerCollision(first, second) {
   first.y -= ny * push;
   second.x += nx * push;
   second.y += ny * push;
-  constrainPlayerToRoom(first);
-  constrainPlayerToRoom(second);
 }
 
 function constrainPlayerToRoom(player) {
@@ -177,6 +281,13 @@ function constrainPlayerToRoom(player) {
   const room = world.room;
   player.x = clamp(player.x, room.x + r, room.x + room.w - r);
   player.y = clamp(player.y, room.y + r, room.y + room.h - r);
+}
+
+function constrainEnemyToRoom(enemy) {
+  const r = enemy.radius;
+  const room = world.room;
+  enemy.x = clamp(enemy.x, room.x + r, room.x + room.w - r);
+  enemy.y = clamp(enemy.y, room.y + r, room.y + room.h - r);
 }
 
 function resolveCircleRect(circle, rect) {
@@ -201,8 +312,17 @@ function draw(time) {
   drawFloor();
   drawRoomWalls();
   drawProps();
-  for (const player of [...players].sort((a, b) => a.y - b.y)) {
-    drawPlayer(player, time);
+  const actors = [
+    ...players.map((player) => ({ kind: "player", actor: player })),
+    ...enemies.map((enemy) => ({ kind: "enemy", actor: enemy })),
+  ];
+
+  for (const { kind, actor } of actors.sort((a, b) => a.actor.y - b.actor.y)) {
+    if (kind === "player") {
+      drawPlayer(actor, time);
+    } else {
+      drawEnemy(actor, time);
+    }
   }
   drawLighting(time);
 }
@@ -317,6 +437,82 @@ function drawBarrels(box) {
     ctx.lineTo(cx + 13, cy + 8);
     ctx.stroke();
   }
+}
+
+function drawEnemy(enemy, time) {
+  if (enemy.type === "snake") {
+    drawSnake(enemy, time);
+  }
+}
+
+function drawSnake(snake, time) {
+  const isDead = !snake.alive;
+  const flash = snake.hitTime > 0 && Math.floor(time * 28) % 2 === 0;
+  const segmentCount = isDead ? 8 : 11;
+  const angle = snake.facing;
+  const forwardX = Math.cos(angle);
+  const forwardY = Math.sin(angle);
+  const sideX = -forwardY;
+  const sideY = forwardX;
+
+  drawShadow(snake.x - forwardX * 22, snake.y + 8, 42, 8);
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (let i = segmentCount - 1; i >= 0; i -= 1) {
+    const curl = isDead ? i * 0.55 : Math.sin(snake.slither - i * 0.72) * 7;
+    const distance = i * 8;
+    const x = snake.x - forwardX * distance + sideX * curl;
+    const y = snake.y - forwardY * distance + sideY * curl;
+    const size = Math.max(6, 13 - i * 0.55);
+
+    ctx.fillStyle = flash ? "#f5dfb4" : i % 2 === 0 ? "#315b22" : "#203d18";
+    ctx.beginPath();
+    ctx.ellipse(x, y, size, size * 0.62, angle, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#10150b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  const headX = snake.x + forwardX * 7;
+  const headY = snake.y + forwardY * 7;
+  ctx.fillStyle = flash ? "#fff0c8" : "#426c2a";
+  ctx.beginPath();
+  ctx.ellipse(headX, headY, 15, 10, angle, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#10150b";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  if (!isDead) {
+    drawSnakeFace(headX, headY, angle, sideX, sideY, forwardX, forwardY);
+  }
+
+  ctx.restore();
+}
+
+function drawSnakeFace(x, y, angle, sideX, sideY, forwardX, forwardY) {
+  for (const side of [-1, 1]) {
+    ctx.fillStyle = "#f2d56b";
+    ctx.beginPath();
+    ctx.arc(x + forwardX * 5 + sideX * side * 4, y + forwardY * 5 + sideY * side * 4, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = "#b92020";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x + forwardX * 13, y + forwardY * 13);
+  ctx.lineTo(x + forwardX * 21, y + forwardY * 21);
+  ctx.moveTo(x + forwardX * 21, y + forwardY * 21);
+  ctx.lineTo(x + forwardX * 25 + Math.cos(angle - 0.7) * 5, y + forwardY * 25 + Math.sin(angle - 0.7) * 5);
+  ctx.moveTo(x + forwardX * 21, y + forwardY * 21);
+  ctx.lineTo(x + forwardX * 25 + Math.cos(angle + 0.7) * 5, y + forwardY * 25 + Math.sin(angle + 0.7) * 5);
+  ctx.stroke();
 }
 
 function drawPlayer(player, time) {
@@ -496,6 +692,10 @@ function lerp(start, end, amount) {
 
 function easeOutCubic(value) {
   return 1 - Math.pow(1 - value, 3);
+}
+
+function distanceBetween(first, second) {
+  return Math.hypot(first.x - second.x, first.y - second.y);
 }
 
 requestAnimationFrame(gameLoop);
