@@ -8,17 +8,48 @@ const world = {
   room: { x: 80, y: 62, w: 800, h: 500 },
 };
 
-const player = {
-  x: world.width / 2,
-  y: world.height / 2 + 80,
-  radius: 15,
-  speed: 185,
-  facing: 1,
-  stride: 0,
-  attackTime: 0,
-  attackDuration: 0.34,
-  attackCooldown: 0,
-};
+const players = [
+  {
+    x: world.width / 2 - 48,
+    y: world.height / 2 + 80,
+    radius: 15,
+    speed: 185,
+    facing: 1,
+    stride: 0,
+    attackTime: 0,
+    attackDuration: 0.34,
+    attackCooldown: 0,
+    controls: { left: "a", right: "d", up: "w", down: "s", attack: " " },
+    style: {
+      tunic: "#5e1f1b",
+      hair: "#251812",
+      skin: "#b9976d",
+      blade: "#eadbb8",
+      slash: "255, 229, 157",
+      feminine: false,
+    },
+  },
+  {
+    x: world.width / 2 + 48,
+    y: world.height / 2 + 80,
+    radius: 14,
+    speed: 190,
+    facing: -1,
+    stride: 0,
+    attackTime: 0,
+    attackDuration: 0.32,
+    attackCooldown: 0,
+    controls: { left: "arrowleft", right: "arrowright", up: "arrowup", down: "arrowdown", attack: "enter" },
+    style: {
+      tunic: "#274d63",
+      hair: "#3a1d13",
+      skin: "#c79f78",
+      blade: "#d9f2ff",
+      slash: "151, 226, 255",
+      feminine: true,
+    },
+  },
+];
 
 const blockers = [
   { x: 130, y: 112, w: 108, h: 56, label: "table" },
@@ -31,15 +62,21 @@ const blockers = [
 let lastTime = performance.now();
 
 window.addEventListener("keydown", (event) => {
-  if (["w", "a", "s", "d", " "].includes(event.key.toLowerCase())) {
+  const key = event.key.toLowerCase();
+
+  if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", " ", "enter"].includes(key)) {
     event.preventDefault();
   }
 
-  if (event.key === " " && !event.repeat) {
-    startAttack();
+  if (!event.repeat) {
+    for (const player of players) {
+      if (key === player.controls.attack) {
+        startAttack(player);
+      }
+    }
   }
 
-  keys.add(event.key.toLowerCase());
+  keys.add(key);
 });
 
 window.addEventListener("keyup", (event) => {
@@ -55,11 +92,19 @@ function gameLoop(now) {
 }
 
 function update(delta) {
+  for (const player of players) {
+    updatePlayer(player, delta);
+  }
+
+  resolvePlayerCollision(players[0], players[1]);
+}
+
+function updatePlayer(player, delta) {
   player.attackCooldown = Math.max(0, player.attackCooldown - delta);
   player.attackTime = Math.max(0, player.attackTime - delta);
 
-  const horizontal = axis("a", "d");
-  const vertical = axis("w", "s");
+  const horizontal = axis(player.controls.left, player.controls.right);
+  const vertical = axis(player.controls.up, player.controls.down);
   const length = Math.hypot(horizontal, vertical) || 1;
   const attackMoveFactor = player.attackTime > 0 ? 0.42 : 1;
   const dx = (horizontal / length) * player.speed * attackMoveFactor * delta;
@@ -69,8 +114,8 @@ function update(delta) {
     player.facing = Math.sign(horizontal);
   }
 
-  movePlayer(dx, 0);
-  movePlayer(0, dy);
+  movePlayer(player, dx, 0);
+  movePlayer(player, 0, dy);
 
   if (horizontal !== 0 || vertical !== 0) {
     player.stride += delta * 10;
@@ -79,7 +124,7 @@ function update(delta) {
   }
 }
 
-function startAttack() {
+function startAttack(player) {
   if (player.attackCooldown > 0) {
     return;
   }
@@ -92,7 +137,7 @@ function axis(negativeKey, positiveKey) {
   return Number(keys.has(positiveKey)) - Number(keys.has(negativeKey));
 }
 
-function movePlayer(dx, dy) {
+function movePlayer(player, dx, dy) {
   player.x += dx;
   player.y += dy;
 
@@ -104,6 +149,34 @@ function movePlayer(dx, dy) {
   for (const box of blockers) {
     resolveCircleRect(player, box);
   }
+}
+
+function resolvePlayerCollision(first, second) {
+  const dx = second.x - first.x;
+  const dy = second.y - first.y;
+  const distance = Math.hypot(dx, dy);
+  const minDistance = first.radius + second.radius;
+
+  if (distance === 0 || distance >= minDistance) {
+    return;
+  }
+
+  const push = (minDistance - distance) / 2;
+  const nx = dx / distance;
+  const ny = dy / distance;
+  first.x -= nx * push;
+  first.y -= ny * push;
+  second.x += nx * push;
+  second.y += ny * push;
+  constrainPlayerToRoom(first);
+  constrainPlayerToRoom(second);
+}
+
+function constrainPlayerToRoom(player) {
+  const r = player.radius;
+  const room = world.room;
+  player.x = clamp(player.x, room.x + r, room.x + room.w - r);
+  player.y = clamp(player.y, room.y + r, room.y + room.h - r);
 }
 
 function resolveCircleRect(circle, rect) {
@@ -128,7 +201,9 @@ function draw(time) {
   drawFloor();
   drawRoomWalls();
   drawProps();
-  drawPlayer(time);
+  for (const player of [...players].sort((a, b) => a.y - b.y)) {
+    drawPlayer(player, time);
+  }
   drawLighting(time);
 }
 
@@ -244,14 +319,15 @@ function drawBarrels(box) {
   }
 }
 
-function drawPlayer(time) {
+function drawPlayer(player, time) {
   const bob = Math.sin(player.stride) * 2.5;
   const x = player.x;
   const y = player.y + bob;
-  const attackProgress = getAttackProgress();
+  const attackProgress = getAttackProgress(player);
+  const style = player.style;
 
   drawShadow(x, y + 18, 34, 10);
-  drawAttackArc(x, y, attackProgress);
+  drawAttackArc(player, x, y, attackProgress);
 
   ctx.save();
   ctx.translate(x, y);
@@ -261,27 +337,34 @@ function drawPlayer(time) {
   ctx.fillStyle = "#1a1110";
   ctx.fillRect(-5, -25, 10, 28);
 
-  ctx.fillStyle = "#5e1f1b";
+  ctx.fillStyle = style.tunic;
   ctx.beginPath();
   ctx.moveTo(0, -30);
-  ctx.lineTo(17, -5);
-  ctx.lineTo(10, 18);
-  ctx.lineTo(-10, 18);
-  ctx.lineTo(-17, -5);
+  ctx.lineTo(style.feminine ? 14 : 17, -5);
+  ctx.lineTo(style.feminine ? 8 : 10, 18);
+  ctx.lineTo(style.feminine ? -8 : -10, 18);
+  ctx.lineTo(style.feminine ? -14 : -17, -5);
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = "#b9976d";
+  ctx.fillStyle = style.skin;
   ctx.beginPath();
   ctx.arc(0, -35, 10, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "#251812";
+  ctx.fillStyle = style.hair;
   ctx.beginPath();
   ctx.arc(-2, -40, 11, Math.PI * 0.88, Math.PI * 2.12);
   ctx.fill();
 
-  drawSwordArm(time, attackProgress);
+  if (style.feminine) {
+    ctx.beginPath();
+    ctx.ellipse(-9, -28, 7, 17, -0.28, 0, Math.PI * 2);
+    ctx.ellipse(8, -29, 6, 15, 0.18, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawSwordArm(style, time, attackProgress);
 
   ctx.strokeStyle = "#261511";
   ctx.lineWidth = 5;
@@ -295,7 +378,7 @@ function drawPlayer(time) {
   ctx.restore();
 }
 
-function getAttackProgress() {
+function getAttackProgress(player) {
   if (player.attackTime <= 0) {
     return 0;
   }
@@ -303,11 +386,11 @@ function getAttackProgress() {
   return 1 - player.attackTime / player.attackDuration;
 }
 
-function drawSwordArm(time, attackProgress) {
+function drawSwordArm(style, time, attackProgress) {
   const idleTipY = -25 + Math.sin(time * 5) * 2;
 
   if (attackProgress === 0) {
-    ctx.strokeStyle = "#c6b183";
+    ctx.strokeStyle = style.blade;
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(12, -13);
@@ -331,7 +414,7 @@ function drawSwordArm(time, attackProgress) {
   ctx.lineTo(gripX, gripY);
   ctx.stroke();
 
-  ctx.strokeStyle = "#eadbb8";
+  ctx.strokeStyle = style.blade;
   ctx.lineWidth = 5;
   ctx.beginPath();
   ctx.moveTo(gripX, gripY);
@@ -346,7 +429,7 @@ function drawSwordArm(time, attackProgress) {
   ctx.stroke();
 }
 
-function drawAttackArc(x, y, attackProgress) {
+function drawAttackArc(player, x, y, attackProgress) {
   if (attackProgress <= 0.15 || attackProgress >= 0.78) {
     return;
   }
@@ -357,14 +440,14 @@ function drawAttackArc(x, y, attackProgress) {
 
   ctx.save();
   ctx.globalCompositeOperation = "screen";
-  ctx.strokeStyle = `rgba(255, 229, 157, ${0.46 * visible})`;
+  ctx.strokeStyle = `rgba(${player.style.slash}, ${0.46 * visible})`;
   ctx.lineWidth = 13;
   ctx.lineCap = "round";
   ctx.beginPath();
   ctx.arc(x, y - 14, 55, start, end, player.facing < 0);
   ctx.stroke();
 
-  ctx.strokeStyle = `rgba(255, 117, 48, ${0.32 * visible})`;
+  ctx.strokeStyle = `rgba(${player.style.slash}, ${0.32 * visible})`;
   ctx.lineWidth = 4;
   ctx.beginPath();
   ctx.arc(x, y - 14, 64, start + 0.08 * player.facing, end - 0.08 * player.facing, player.facing < 0);
@@ -381,9 +464,11 @@ function drawShadow(x, y, width, height) {
 
 function drawLighting(time) {
   const pulse = 0.05 + Math.sin(time * 4) * 0.02;
+  const lightX = (players[0].x + players[1].x) / 2;
+  const lightY = (players[0].y + players[1].y) / 2;
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
-  const dark = ctx.createRadialGradient(player.x, player.y, 58, player.x, player.y, 430);
+  const dark = ctx.createRadialGradient(lightX, lightY, 58, lightX, lightY, 430);
   dark.addColorStop(0, "rgba(255, 245, 212, 0.18)");
   dark.addColorStop(0.38, "rgba(98, 57, 32, 0.45)");
   dark.addColorStop(1, "rgba(0, 0, 0, 0.92)");
